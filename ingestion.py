@@ -4,6 +4,7 @@ from models import PriceTick
 
 producer = Producer({'bootstrap.servers': '10.0.0.1:9092'})
 SYMBOLS = ["AAPL", "TSLA", "BTC", "ETH"]
+random.seed(42)
 
 def start_ingestion():
     print("Market Data Ingestion Started...")
@@ -11,9 +12,9 @@ def start_ingestion():
         for sym in SYMBOLS:
             tick = PriceTick(
                 symbol=sym,
-                price=round(random.uniform(150, 200), 2),
+                price=round(random.uniform(0, 200), 2),
                 timestamp=str(time.time()),
-                ingestion_ts=time.perf_counter()
+                ingestion_ts=time.time()
             )
             producer.produce(f'prices.{sym}', tick.model_dump_json().encode())
         producer.flush()

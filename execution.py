@@ -1,4 +1,4 @@
-import socket, uuid, time, numpy
+import socket, uuid, time
 from confluent_kafka import Consumer, Producer
 from models import Order, Fill
 
@@ -25,7 +25,10 @@ consumer = Consumer({'bootstrap.servers': KAFKA_BOOTSTRAP, 'group.id': 'executio
 consumer.subscribe(['orders'])
 fill_prod = Producer({'bootstrap.servers': KAFKA_BOOTSTRAP})
 
+min_observed_diff = None
+
 def mock_execute():
+    global min_observed_diff
     print("Execution Node (MOCK MODE) Started...")
     print("-" * 50)
     
@@ -48,7 +51,7 @@ def mock_execute():
                 symbol=ord.symbol,
                 action=ord.action,
                 quantity_filled=ord.quantity,
-                fill_price=ord.price_at_order * numpy.random.normal(loc=1.0, scale=0.02, size=None), # simulate chaos
+                fill_price=ord.price_at_order,
                 ingestion_ts=ord.ingestion_ts
             )
             
@@ -59,7 +62,13 @@ def mock_execute():
             )
             fill_prod.flush()
             
-            latency = (time.perf_counter() - ord.ingestion_ts) * 1000
+            arrival_time = time.time()
+            raw_diff = arrival_time - ord.ingestion_ts
+
+            if min_observed_diff is None or raw_diff < min_observed_diff:
+                min_observed_diff = raw_diff
+
+            latency = (raw_diff - min_observed_diff) * 1000
             print(f" [FILL] | {fill_msg.action} {fill_msg.symbol} | Latency: {latency:.2f}ms")
             print("-" * 50)
             
