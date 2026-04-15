@@ -27,6 +27,15 @@ fill_prod = Producer({'bootstrap.servers': KAFKA_BOOTSTRAP})
 
 min_observed_diff = None
 
+def safe_produce(producer, topic, data, cb):
+    while True:
+        try:
+            producer.produce(topic, data, callback=cb)
+            producer.poll(0) 
+            break
+        except BufferError:
+            producer.poll(0.1)
+
 def mock_execute():
     global min_observed_diff
     print("Execution Node (MOCK MODE) Started...")
@@ -55,11 +64,10 @@ def mock_execute():
                 ingestion_ts=ord.ingestion_ts
             )
             
-            fill_prod.produce(
-                'fills', 
-                fill_msg.model_dump_json().encode(),
-                callback=lambda err, msg: print(f"Confirmed Fill for {fill_msg.symbol}") if err is None else print(f"Error: {err}")
-            )
+            cb = lambda err, msg: print(f"Confirmed Fill for {fill_msg.symbol}") if err is None else print(f"Error: {err}")
+            safe_produce(fill_prod, 'fills',
+                         fill_msg.model_dump_json().encode(),
+                         cb)
             fill_prod.flush()
             
             arrival_time = time.time()

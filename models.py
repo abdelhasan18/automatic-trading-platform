@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Literal, Optional
+from typing import Literal, Optional, Dict
 
 class PriceTick(BaseModel):
     symbol: str
@@ -29,4 +29,11 @@ class Fill(BaseModel):
     action: Literal["BUY", "SELL"]
     quantity_filled: int
     fill_price: float
+    ingestion_ts: float
+
+class MonolithicStatus(BaseModel):
+    portfolio: Dict[str, int]
+    current_prices: Dict[str, float]
+    total_trades: int
+    latest_event: str
     ingestion_ts: float

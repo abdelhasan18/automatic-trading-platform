@@ -22,6 +22,15 @@ consumer = Consumer({'bootstrap.servers': KAFKA_BOOTSTRAP, 'group.id': 'strategy
 consumer.subscribe(['^prices.*'])
 signal_prod = Producer({'bootstrap.servers': KAFKA_BOOTSTRAP})
 
+def safe_produce(producer, topic, data):
+    while True:
+        try:
+            producer.produce(topic, data)
+            producer.poll(0) 
+            break
+        except BufferError:
+            producer.poll(0.1)
+
 def run_logic():
     print("Strategy Node Active...")
     while True:
@@ -58,7 +67,8 @@ def run_logic():
                 price_at_signal=tick.price,
                 ingestion_ts=tick.ingestion_ts
             )
-            signal_prod.produce('signals', sig.model_dump_json().encode())
+            safe_produce(signal_prod, 'signals', sig.model_dump_json().encode())
+
 
 if __name__ == "__main__":
     run_logic()

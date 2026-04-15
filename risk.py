@@ -1,4 +1,4 @@
-import socket, uuid, redis
+import socket, uuid
 from confluent_kafka import Consumer, Producer
 from models import Signal, Order, Fill
 
@@ -15,13 +15,25 @@ def format_bootstrap_server(ip):
 
 KAFKA_BOOTSTRAP = format_bootstrap_server(raw_ip)
 
-r = redis.Redis(host=raw_ip, port=6379, decode_responses=True)
 consumer = Consumer({'bootstrap.servers': KAFKA_BOOTSTRAP, 'group.id': f'risk-group-{uuid.uuid4()}', 'auto.offset.reset': 'latest'})
 consumer.subscribe(['signals', 'fills'])
 order_prod = Producer({'bootstrap.servers': KAFKA_BOOTSTRAP})
 
+def safe_produce(producer, topic, data):
+    while True:
+        try:
+            producer.produce(topic, data)
+            producer.poll(0) 
+            break
+        except BufferError:
+            producer.poll(0.1)
+
 def check_risk():
-    print("Risk Engine Active (Strict Mode)...")
+    print("Risk Engine Active...")
+    
+    positions = {} 
+    pending = {}
+
     while True:
         msg = consumer.poll(0.1)
         if msg is None: continue
@@ -38,23 +50,21 @@ def check_risk():
                 sym = fill.symbol
 
                 change = fill.quantity_filled if fill.action == "BUY" else -fill.quantity_filled
-                new_pos = r.incrby(f"pos:{sym}", change)
-            
-                # if we filled a buy, we reduce the pending buy count
-                # f we filled a sell, we bring the negative pending count back toward zero
-                if fill.action == "BUY":
-                    r.decr(f"pending:{sym}")
-                else:
-                    r.incr(f"pending:{sym}")
+                positions[sym] = positions.get(sym, 0) + change
                 
-                print(f" [FILL] {sym} | Confirmed Pos: {new_pos}")
+                if fill.action == "BUY":
+                    pending[sym] = pending.get(sym, 0) - 1
+                else:
+                    pending[sym] = pending.get(sym, 0) + 1
+                
+                print(f" [FILL] {sym} | Confirmed Pos: {positions[sym]}")
 
             elif topic == 'signals':
                 sig = Signal.model_validate_json(raw_val)
                 sym = sig.symbol
 
-                conf_pos = int(r.get(f"pos:{sym}") or 0)
-                pend_pos = int(r.get(f"pending:{sym}") or 0)
+                conf_pos = positions.get(sym, 0)
+                pend_pos = pending.get(sym, 0)
                 eff_pos = conf_pos + pend_pos
                 
                 can_buy = (sig.action == "BUY" and eff_pos < 5)
@@ -62,9 +72,9 @@ def check_risk():
 
                 if can_buy or can_sell:
                     if sig.action == "BUY": 
-                        r.incr(f"pending:{sym}")
+                        pending[sym] = pending.get(sym, 0) + 1
                     else: 
-                        r.decr(f"pending:{sym}")
+                        pending[sym] = pending.get(sym, 0) - 1
 
                     ord = Order(
                         order_id=str(uuid.uuid4()),
@@ -74,8 +84,8 @@ def check_risk():
                         price_at_order=sig.price_at_signal,
                         ingestion_ts=sig.ingestion_ts
                     )
-                    order_prod.produce('orders', ord.model_dump_json().encode())
-                    order_prod.flush()
+
+                    safe_produce(order_prod, 'orders', ord.model_dump_json().encode())
                     
                     new_eff = eff_pos + (1 if sig.action == 'BUY' else -1)
                     print(f" [ORDER] {sig.action} {sym} | New Eff Pos: {new_eff}")
